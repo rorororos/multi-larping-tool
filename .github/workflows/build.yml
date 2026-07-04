@@ -1,28 +1,47 @@
-name: Build
+import { build } from "esbuild";
+import { createHash } from "crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
-on:
-    push:
-        branches: [main]
-    workflow_dispatch:
+mkdirSync("dist", { recursive: true });
 
-permissions:
-    contents: write
+await build({
+    entryPoints: ["src/index.js"],
+    outfile: "dist/index.js",
+    bundle: true,
+    minify: false,
+    format: "cjs",
+    target: "esnext",
+    platform: "browser",
+    loader: { ".jsx": "jsx" },
+    jsx: "automatic",
+    jsxImportSource: "react",
+    plugins: [
+        {
+            name: "vendetta-externals",
+            setup(build) {
+                build.onResolve({ filter: /^@vendetta.*/ }, (args) => ({
+                    path: args.path,
+                    namespace: "vendetta-external"
+                }));
+                build.onResolve({ filter: /^react$|^react-native$/ }, (args) => ({
+                    path: args.path,
+                    namespace: "vendetta-external"
+                }));
+                build.onLoad({ filter: /.*/, namespace: "vendetta-external" }, (args) => ({
+                    contents: `module.exports = vendetta.metro.findByProps ? vendetta : globalThis.vendettaRequire("${args.path}")`,
+                    loader: "js"
+                }));
+            }
+        }
+    ],
+    logLevel: "info"
+});
 
-jobs:
-    build:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
-              with:
-                  node-version: 20
+const code = readFileSync("dist/index.js", "utf8");
+const hash = createHash("sha256").update(code).digest("hex");
 
-            - run: npm install
-            - run: npm run build
+const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+manifest.hash = hash;
+writeFileSync("dist/manifest.json", JSON.stringify(manifest, null, 2));
 
-            - name: Deploy to gh-pages
-              uses: peaceiris/actions-gh-pages@v3
-              with:
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
-                  publish_dir: ./dist
-                  publish_branch: gh-pages
+console.log("build done, hash:", hash);
