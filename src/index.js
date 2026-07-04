@@ -1,7 +1,8 @@
-import { findByStoreName, findByProps } from "@vendetta/metro";
-import { before, after } from "@vendetta/patcher";
+import { findByStoreName } from "@vendetta/metro";
+import { after } from "@vendetta/patcher";
 import { storage } from "@vendetta/plugin";
 import { showToast } from "@vendetta/ui/toasts";
+import Settings from "./Settings";
 
 const BADGES_CATALOG = {
     staff: { id: "staff", description: "Discord Staff", icon: "5e74e9b61934fc1f67c65515d1f7e60d" },
@@ -28,103 +29,38 @@ const BADGES_CATALOG = {
     orb_profile_badge: { id: "orb_profile_badge", description: "Collected the Orb Profile Badge", icon: "83d8a1eb09a8d64e59233eec5d4d5c2d" },
 };
 
-// defaults
-storage.activeBadges ??= [];
-storage.hiddenBadges ??= [];
-storage.displayName ??= "";
-storage.username ??= "";
-storage.fakeCreatedAt ??= "";
+if (!storage.activeBadges) storage.activeBadges = [];
+if (!storage.hiddenBadges) storage.hiddenBadges = [];
+if (!storage.displayName) storage.displayName = "";
+if (!storage.username) storage.username = "";
+if (!storage.fakeCreatedAt) storage.fakeCreatedAt = "";
 
-const UserStore = findByStoreName("UserStore");
-const UserProfileStore = findByStoreName("UserProfileStore");
-
-let userId = null;
 const patches = [];
-
-export default {
-    onLoad: () => {
-        try {
-            userId = UserStore.getCurrentUser()?.id;
-            if (!userId) {
-                console.log("[MultiLarpingTool] no user id lol");
-                return;
-            }
-
-            // patch profile pra adicionar/esconder badges
-            patches.push(after("getUserProfile", UserProfileStore, (args, profile) => {
-                if (!profile || args[0] !== userId) return;
-                profile.badges ??= [];
-
-                // esconde badges hidden
-                if (storage.hiddenBadges.length > 0) {
-                    profile.badges = profile.badges.filter(b => !storage.hiddenBadges.includes(b.id));
-                }
-
-                // adiciona badges fake
-                const existing = new Set(profile.badges.map(b => b.id));
-                for (const key of storage.activeBadges) {
-                    const badge = BADGES_CATALOG[key];
-                    if (badge && !existing.has(badge.id)) {
-                        profile.badges.push(badge);
-                    }
-                }
-            }));
-
-            // patch user pra mudar nome
-            patches.push(after("getCurrentUser", UserStore, (args, user) => {
-                if (!user || user.id !== userId) return;
-                modifyUser(user);
-            }));
-
-            patches.push(after("getUser", UserStore, (args, user) => {
-                if (!user || args[0] !== userId) return;
-                modifyUser(user);
-            }));
-
-            console.log("[MultiLarpingTool] loaded btw");
-        } catch (e) {
-            console.error("[MultiLarpingTool] load error:", e);
-        }
-    },
-
-    onUnload: () => {
-        for (const unpatch of patches) unpatch();
-        patches.length = 0;
-        console.log("[MultiLarpingTool] unloaded");
-    },
-
-    settings: require("./Settings").default
-};
+let userId = null;
 
 function modifyUser(user) {
-    if (storage.displayName) user.globalName = storage.displayName;
-    if (storage.username) user.username = storage.username;
-
-    if (storage.fakeCreatedAt) {
-        try {
-            const fakeDate = new Date(storage.fakeCreatedAt);
-            if (!isNaN(fakeDate.getTime())) {
-                Object.defineProperty(user, "createdAt", {
-                    get: () => fakeDate,
-                    configurable: true
-                });
-            }
-        } catch {}
-    }
+    try {
+        if (storage.displayName) user.globalName = storage.displayName;
+        if (storage.username) user.username = storage.username;
+    } catch (e) {}
 }
+
+export const BADGES = BADGES_CATALOG;
 
 export function captureFromUserId(targetId) {
     try {
+        const UserStore = findByStoreName("UserStore");
+        const UserProfileStore = findByStoreName("UserProfileStore");
         const user = UserStore.getUser(targetId);
         const profile = UserProfileStore.getUserProfile(targetId);
 
         if (!user && !profile) {
-            showToast("user not cached lol, open their profile first", { type: 2 });
-            return 0;
+            showToast("user not cached, open their profile first lol", { type: 2 });
+            return;
         }
 
         let added = 0;
-        const theirBadges = profile?.badges || [];
+        const theirBadges = (profile && profile.badges) || [];
 
         for (const badge of theirBadges) {
             const key = Object.keys(BADGES_CATALOG).find(k => BADGES_CATALOG[k].id === badge.id);
@@ -134,13 +70,66 @@ export function captureFromUserId(targetId) {
             }
         }
 
-        showToast(`snagged ${added} badge${added !== 1 ? "s" : ""} from ${user?.username || targetId}`, { type: 1 });
-        return added;
+        const name = (user && user.username) || targetId;
+        showToast(`snagged ${added} badge${added !== 1 ? "s" : ""} from ${name}`, { type: 1 });
     } catch (e) {
-        console.error(e);
+        console.log("[MultiLarpingTool] capture error:", e);
         showToast("something broke lol", { type: 2 });
-        return 0;
     }
 }
 
-export { BADGES_CATALOG };
+export const onLoad = () => {
+    try {
+        const UserStore = findByStoreName("UserStore");
+        const UserProfileStore = findByStoreName("UserProfileStore");
+
+        const currentUser = UserStore.getCurrentUser();
+        if (!currentUser) {
+            console.log("[MultiLarpingTool] no current user");
+            return;
+        }
+        userId = currentUser.id;
+
+        patches.push(after("getUserProfile", UserProfileStore, ([id], profile) => {
+            if (!profile || id !== userId) return profile;
+            if (!profile.badges) profile.badges = [];
+
+            if (storage.hiddenBadges.length > 0) {
+                profile.badges = profile.badges.filter(b => !storage.hiddenBadges.includes(b.id));
+            }
+
+            const existing = new Set(profile.badges.map(b => b.id));
+            for (const key of storage.activeBadges) {
+                const badge = BADGES_CATALOG[key];
+                if (badge && !existing.has(badge.id)) {
+                    profile.badges.push(badge);
+                }
+            }
+
+            return profile;
+        }));
+
+        patches.push(after("getCurrentUser", UserStore, (args, user) => {
+            if (!user || user.id !== userId) return;
+            modifyUser(user);
+        }));
+
+        patches.push(after("getUser", UserStore, ([id], user) => {
+            if (!user || id !== userId) return;
+            modifyUser(user);
+        }));
+
+        console.log("[MultiLarpingTool] loaded btw");
+    } catch (e) {
+        console.log("[MultiLarpingTool] load error:", e);
+    }
+};
+
+export const onUnload = () => {
+    for (const unpatch of patches) {
+        try { unpatch(); } catch {}
+    }
+    patches.length = 0;
+};
+
+export const settings = Settings;
