@@ -1,0 +1,15 @@
+{
+    "name": "Multi-Larping Tool",
+    "description": "fake badges, name and member since date. underground larp edition lol",
+    "authors": [
+        {
+            "name": "LarpHub",
+            "id": "0"
+        }
+    ],
+    "main": "index.js",
+    "vendetta": {
+        "icon": "ic_badge"
+    },
+    "hash": "will-be-replaced-on-build"
+}
